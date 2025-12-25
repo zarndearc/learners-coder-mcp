@@ -32,18 +32,85 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// In-memory document store for MCP search/fetch operations
+const documentStore = new Map();
+
+// Initialize document store with knowledge base
+function initializeDocumentStore() {
+  // Add learning resources
+  documentStore.set("learn-expressjs", {
+    id: "learn-expressjs",
+    title: "Express.js Development Guide",
+    text: "Comprehensive guide for building Express.js applications with best practices, middleware patterns, and production deployment strategies.",
+    url: "https://learners-coder-mcp.local/docs/expressjs",
+    metadata: { type: "learning", category: "backend" },
+  });
+
+  documentStore.set("learn-react", {
+    id: "learn-react",
+    title: "React SPA Development",
+    text: "Best practices for building Single Page Applications with React, including component architecture, state management, and performance optimization.",
+    url: "https://learners-coder-mcp.local/docs/react",
+    metadata: { type: "learning", category: "frontend" },
+  });
+
+  documentStore.set("learn-nextjs", {
+    id: "learn-nextjs",
+    title: "Next.js Full-Stack Development",
+    text: "Guide to building full-stack applications with Next.js, including server-side rendering, API routes, and deployment strategies.",
+    url: "https://learners-coder-mcp.local/docs/nextjs",
+    metadata: { type: "learning", category: "fullstack" },
+  });
+
+  documentStore.set("payments-razorpay", {
+    id: "payments-razorpay",
+    title: "Razorpay Payment Integration",
+    text: "Complete guide for integrating Razorpay payment gateway in Node.js applications. Includes webhook handling, subscription management, and compliance requirements for Indian businesses.",
+    url: "https://learners-coder-mcp.local/docs/payments/razorpay",
+    metadata: { type: "payments", category: "india", gateway: "razorpay" },
+  });
+
+  documentStore.set("payments-payu", {
+    id: "payments-payu",
+    title: "PayU Payment Gateway Integration",
+    text: "Integration guide for PayU payment gateway. Covers setup, transaction handling, and integration with Express.js applications for Indian e-commerce platforms.",
+    url: "https://learners-coder-mcp.local/docs/payments/payu",
+    metadata: { type: "payments", category: "india", gateway: "payu" },
+  });
+
+  documentStore.set("infrastructure-proxmox", {
+    id: "infrastructure-proxmox",
+    title: "Proxmox Infrastructure Management",
+    text: "Guide to using Proxmox for virtualization and infrastructure management. Covers VM creation, clustering, API integration, and Node.js automation.",
+    url: "https://learners-coder-mcp.local/docs/infrastructure/proxmox",
+    metadata: { type: "infrastructure", category: "virtualization" },
+  });
+
+  documentStore.set("production-recommendations", {
+    id: "production-recommendations",
+    title: "Production Deployment Best Practices",
+    text: "Comprehensive guide for deploying web applications to production. Includes security hardening, performance optimization, monitoring, and disaster recovery strategies.",
+    url: "https://learners-coder-mcp.local/docs/production",
+    metadata: { type: "production", category: "deployment" },
+  });
+}
+
+// Initialize on startup
+initializeDocumentStore();
+
 // Root endpoint for service health and info
 app.get("/", (req, res) => {
   res.json({
     service: "Learner's Coder MCP",
-    version: "1.0.0",
+    version: "2.0.0",
     status: "operational",
     description:
-      "MCP agent for web development guidance - designed for ChatGPT integration",
+      "MCP server for web development guidance - compatible with ChatGPT connectors and deep research",
     endpoints: {
       root: "GET /",
       health: "GET /health",
-      mcp: "POST /mcp",
+      sse: "GET /sse/ - MCP SSE endpoint (use for ChatGPT)",
+      mcp: "POST /mcp - Legacy MCP endpoint",
     },
     capabilities: [
       "Express.js stack guidance",
@@ -57,6 +124,115 @@ app.get("/", (req, res) => {
   });
 });
 
+// MCP SSE Endpoint (Required for ChatGPT Connectors)
+// This endpoint must be accessible at /sse/ and handle MCP protocol
+app.get("/sse/", (req, res) => {
+  // Set SSE headers
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  // Send a simple handshake/ready message
+  res.write(`:ready\n\n`);
+
+  // Keep connection alive
+  const keepAliveInterval = setInterval(() => {
+    res.write(`:ping\n\n`);
+  }, 30000);
+
+  req.on("close", () => {
+    clearInterval(keepAliveInterval);
+  });
+});
+
+// MCP Tool Handler - Search Tool (Required)
+// This implements the "search" tool for ChatGPT MCP integration
+app.post("/sse/tools/search", (req, res) => {
+  const { query } = req.body;
+
+  if (!query) {
+    return res.json({
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            results: [],
+          }),
+        },
+      ],
+    });
+  }
+
+  // Search documents in the store
+  const results = [];
+  const queryLower = query.toLowerCase();
+
+  documentStore.forEach((doc) => {
+    if (
+      doc.title.toLowerCase().includes(queryLower) ||
+      doc.text.toLowerCase().includes(queryLower) ||
+      Object.values(doc.metadata).some((val) =>
+        String(val).toLowerCase().includes(queryLower)
+      )
+    ) {
+      results.push({
+        id: doc.id,
+        title: doc.title,
+        url: doc.url,
+      });
+    }
+  });
+
+  // MCP protocol requires content array with text type
+  res.json({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ results }),
+      },
+    ],
+  });
+});
+
+// MCP Tool Handler - Fetch Tool (Required)
+// This implements the "fetch" tool for ChatGPT MCP integration
+app.post("/sse/tools/fetch", (req, res) => {
+  const { id } = req.body;
+
+  if (!id || !documentStore.has(id)) {
+    return res.json({
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            id,
+            title: "Not Found",
+            text: "Document not found",
+            url: "#",
+            metadata: {},
+          }),
+        },
+      ],
+    });
+  }
+
+  const doc = documentStore.get(id);
+
+  // MCP protocol requires content array with text type
+  res.json({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(doc),
+      },
+    ],
+  });
+});
+
+// Legacy MCP POST endpoint
 app.post("/mcp", (req, res) => {
   const userMessage = req.body?.message || "";
 
