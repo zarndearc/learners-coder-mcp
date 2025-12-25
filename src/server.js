@@ -275,6 +275,35 @@ app.options(["/sse", "/sse/", "/sse/messages"], (req, res) => {
 
 // Root endpoint for service health and info
 app.get("/", (req, res) => {
+  // If a client is trying to connect via MCP SSE but provided the base URL,
+  // treat / as an alias for the SSE endpoint.
+  const accept = String(req.headers?.accept ?? "");
+  if (accept.includes("text/event-stream")) {
+    // Reuse the same MCP SSE transport behavior.
+    // (We intentionally do not redirect, because some clients don't follow redirects for SSE.)
+    attachSseRoute("/");
+    // Express will re-run the route handler chain; easiest is to just delegate directly.
+    // Create a transport and connect immediately.
+    (async () => {
+      try {
+        const transport = new SSEServerTransport("/sse/messages", res);
+        mcpTransports.set(transport.sessionId, transport);
+
+        transport.onclose = () => {
+          mcpTransports.delete(transport.sessionId);
+        };
+
+        await mcpServer.connect(transport);
+      } catch (error) {
+        console.error("Error establishing MCP SSE stream (via /):", error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Error establishing SSE stream" });
+        }
+      }
+    })();
+    return;
+  }
+
   res.json({
     service: "Learner's Coder MCP",
     version: "2.0.0",
@@ -285,6 +314,7 @@ app.get("/", (req, res) => {
       root: "GET /",
       health: "GET /health",
       sse: "GET /sse/ - MCP SSE endpoint (use for ChatGPT)",
+      messages: "POST /sse/messages - MCP message endpoint (JSON-RPC)",
       mcp: "POST /mcp - Legacy MCP endpoint",
     },
     capabilities: [
