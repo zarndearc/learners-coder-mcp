@@ -32,6 +32,31 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Root endpoint for service health and info
+app.get("/", (req, res) => {
+  res.json({
+    service: "Learner's Coder MCP",
+    version: "1.0.0",
+    status: "operational",
+    description:
+      "MCP agent for web development guidance - designed for ChatGPT integration",
+    endpoints: {
+      root: "GET /",
+      health: "GET /health",
+      mcp: "POST /mcp",
+    },
+    capabilities: [
+      "Express.js stack guidance",
+      "React SPA development",
+      "Next.js full-stack apps",
+      "Production recommendations",
+      "Enterprise architecture",
+      "Payment gateway integration",
+      "Infrastructure guidance",
+    ],
+  });
+});
+
 app.post("/mcp", (req, res) => {
   const userMessage = req.body?.message || "";
 
