@@ -1,5 +1,44 @@
 // Web Development Tools and Best Practices Handler
+function normalizeIntentForTools(intent) {
+  const key = String(intent ?? "");
+
+  const aliases = {
+    // Align intent recognition output with this handler's keys
+    "nextjs-fullstack": "nextjs-project",
+    "react-spa": "react-project",
+    "express-rest-api": "api-design",
+    "mern-stack": "mern-project",
+    "nextauth-setup": "authentication",
+    "prisma-setup": "database-design",
+    "mongodb-setup": "database-design",
+    "postgresql-setup": "database-design",
+    "drizzle-orm-setup": "database-design",
+    "jest-testing": "testing-setup",
+    "vitest-testing": "testing-setup",
+    "docker-setup": "deployment",
+    "kubernetes-setup": "deployment",
+
+    // Payments
+    "razorpay-integration": "payment-gateway-setup",
+    "payu-integration": "payment-gateway-setup",
+    "cashfree-integration": "payment-gateway-setup",
+    "instamojo-integration": "payment-gateway-setup",
+    "subscription-payments": "payment-gateway-setup",
+    "invoice-payment": "payment-gateway-setup",
+
+    // Infrastructure
+    "proxmox-vm": "proxmox-setup",
+    "proxmox-container": "proxmox-setup",
+    "proxmox-backup": "proxmox-setup",
+    "proxmox-clustering": "proxmox-setup",
+    "infrastructure-setup": "proxmox-setup",
+  };
+
+  return aliases[key] ?? key;
+}
+
 export function getRecommendedTools(intent) {
+  const normalizedIntent = normalizeIntentForTools(intent);
   const toolsets = {
     "nextjs-project": {
       category: "Full-Stack React Framework",
@@ -259,21 +298,71 @@ export function getRecommendedTools(intent) {
         "Monitor performance regularly",
       ],
     },
+    "mern-project": {
+      category: "MERN Stack",
+      tools: [
+        {
+          name: "Vite + React",
+          purpose: "Modern React SPA frontend",
+          commands: ["npm create vite@latest -- --template react"],
+        },
+        {
+          name: "Express.js",
+          purpose: "Backend REST API",
+          setup: "npm install express",
+        },
+        {
+          name: "MongoDB + Mongoose",
+          purpose: "Document database + ODM",
+          setup: "npm install mongoose",
+        },
+        {
+          name: "jsonwebtoken",
+          purpose: "JWT authentication",
+          setup: "npm install jsonwebtoken",
+        },
+      ],
+      bestPractices: [
+        "Separate frontend and backend packages (or use a monorepo)",
+        "Validate requests at the API boundary (Zod/Joi)",
+        "Use environment variables for secrets",
+        "Implement refresh tokens and rate limiting",
+      ],
+    },
   };
 
-  return toolsets[intent] || toolsets["api-design"];
+  return toolsets[normalizedIntent] || toolsets["api-design"];
 }
 
 export function getTechStackRecommendation(intent) {
+  const normalizedIntent = normalizeIntentForTools(intent);
   const stacks = {
     "nextjs-project": {
+      description: "Next.js full-stack starter (App Router)",
       frontend: "Next.js + React + TailwindCSS",
       backend: "Next.js API Routes",
       database: "PostgreSQL (Prisma ORM)",
       auth: "NextAuth.js or JWT",
       deployment: "Vercel",
     },
+    "react-project": {
+      description: "React SPA starter with modern tooling",
+      frontend: "React + Vite + TailwindCSS",
+      routing: "React Router",
+      serverState: "TanStack Query",
+      clientState: "Zustand",
+      deployment: "Vercel or Netlify",
+    },
+    "api-design": {
+      description: "Express REST API starter",
+      backend: "Express.js",
+      validation: "Zod",
+      database: "PostgreSQL (Prisma) or MongoDB (Mongoose)",
+      auth: "JWT",
+      deployment: "Docker + Any Cloud",
+    },
     "mern-project": {
+      description: "MERN full-stack starter",
       frontend: "React + Vite",
       backend: "Express.js",
       database: "MongoDB (Mongoose)",
@@ -449,5 +538,5 @@ export function getTechStackRecommendation(intent) {
     },
   };
 
-  return stacks[intent] || stacks["full-stack-project"];
+  return stacks[normalizedIntent] || stacks["full-stack-project"];
 }

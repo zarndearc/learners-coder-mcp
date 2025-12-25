@@ -8,6 +8,7 @@
  */
 
 import axios from "axios";
+import { pathToFileURL } from "url";
 
 const API_URL = "http://localhost:3000/mcp";
 
@@ -257,7 +258,7 @@ async function main() {
 }
 
 // Run if called directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(console.error);
 }
 

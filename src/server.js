@@ -335,22 +335,7 @@ app.get("/", (req, res) => {
 app.post("/mcp", (req, res) => {
   const userMessage = req.body?.message || "";
 
-  // Set SSE headers for streaming response
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-
   const policy = enforceTeachingPolicy(userMessage);
-  if (policy.blocked) {
-    const event = JSON.stringify({
-      identity,
-      response: policy.message,
-    });
-    res.write(`data: ${event}\n\n`);
-    res.end();
-    return;
-  }
 
   const intent = analyzeIntent(userMessage);
   const tools = getRecommendedTools(intent);
@@ -366,10 +351,15 @@ app.post("/mcp", (req, res) => {
   let paymentRecommendations = null;
   let infrastructureRecommendations = null;
 
+  const messageLower = String(userMessage ?? "").toLowerCase();
+
   if (
-    intent.includes("payment") ||
-    intent.includes("razorpay") ||
-    intent.includes("payu")
+    messageLower.includes("payment") ||
+    messageLower.includes("payment gateway") ||
+    messageLower.includes("razorpay") ||
+    messageLower.includes("payu") ||
+    messageLower.includes("cashfree") ||
+    messageLower.includes("instamojo")
   ) {
     paymentRecommendations = {
       availableGateways: paymentGatewaysIndia,
@@ -379,9 +369,11 @@ app.post("/mcp", (req, res) => {
   }
 
   if (
-    intent.includes("proxmox") ||
-    intent.includes("infrastructure") ||
-    intent.includes("virtualization")
+    messageLower.includes("proxmox") ||
+    messageLower.includes("virtual machine") ||
+    messageLower.includes("vm") ||
+    messageLower.includes("virtualization") ||
+    messageLower.includes("infrastructure")
   ) {
     infrastructureRecommendations = {
       proxmoxVE: infrastructureLibraries.proxmox,
@@ -393,6 +385,8 @@ app.post("/mcp", (req, res) => {
     identity,
     intent,
     learningStrategy: "concept-first",
+    teachingMode: policy.mode,
+    teachingNote: policy.message,
     questions: generateClarifyingQuestions(intent),
     concepts: getConceptBreakdown(intent),
     recommendedLibraries: stableLibraries,
@@ -409,10 +403,43 @@ app.post("/mcp", (req, res) => {
     note: "You are expected to assemble the final solution. I provide guidance, patterns, and examples only.",
   };
 
-  // Send as SSE event
-  const event = JSON.stringify(responseData);
-  res.write(`data: ${event}\n\n`);
-  res.end();
+  // If the user asks for full implementations, we still respond but enforce concept-snippet output.
+  // Also sanitize any large embedded code blocks (exampleCode/code fields).
+  if (policy.mode === "concept-snippets") {
+    const truncateCodeBlock = (value, maxLines = 18) => {
+      if (typeof value !== "string") return value;
+      const lines = value.split(/\r?\n/);
+      if (lines.length <= maxLines) return value;
+      return `${lines
+        .slice(0, maxLines)
+        .join("\n")}\n// ... truncated (concept snippet only)`;
+    };
+
+    if (
+      responseData.paymentGatewayOptions?.integrationExample?.razorpaySetup
+        ?.code
+    ) {
+      responseData.paymentGatewayOptions.integrationExample.razorpaySetup.code =
+        truncateCodeBlock(
+          responseData.paymentGatewayOptions.integrationExample.razorpaySetup
+            .code
+        );
+    }
+    if (
+      responseData.infrastructureOptions?.integrationGuide?.authentication
+        ?.methods
+    ) {
+      responseData.infrastructureOptions.integrationGuide.authentication.methods =
+        responseData.infrastructureOptions.integrationGuide.authentication.methods.map(
+          (m) => ({
+            ...m,
+            example: truncateCodeBlock(m.example, 6),
+          })
+        );
+    }
+  }
+
+  res.status(200).json(responseData);
 });
 
 // Health check endpoint
