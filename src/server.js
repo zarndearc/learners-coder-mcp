@@ -151,85 +151,86 @@ app.get("/sse/", (req, res) => {
 // MCP Tool Handler - Search Tool (Required)
 // This implements the "search" tool for ChatGPT MCP integration
 app.post("/sse/tools/search", (req, res) => {
+  // Set SSE headers for MCP protocol
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+
   const { query } = req.body;
 
-  if (!query) {
-    return res.json({
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            results: [],
-          }),
-        },
-      ],
+  let results = [];
+
+  if (query) {
+    // Search documents in the store
+    const queryLower = query.toLowerCase();
+
+    documentStore.forEach((doc) => {
+      if (
+        doc.title.toLowerCase().includes(queryLower) ||
+        doc.text.toLowerCase().includes(queryLower) ||
+        Object.values(doc.metadata).some((val) =>
+          String(val).toLowerCase().includes(queryLower)
+        )
+      ) {
+        results.push({
+          id: doc.id,
+          title: doc.title,
+          url: doc.url,
+        });
+      }
     });
   }
 
-  // Search documents in the store
-  const results = [];
-  const queryLower = query.toLowerCase();
-
-  documentStore.forEach((doc) => {
-    if (
-      doc.title.toLowerCase().includes(queryLower) ||
-      doc.text.toLowerCase().includes(queryLower) ||
-      Object.values(doc.metadata).some((val) =>
-        String(val).toLowerCase().includes(queryLower)
-      )
-    ) {
-      results.push({
-        id: doc.id,
-        title: doc.title,
-        url: doc.url,
-      });
-    }
-  });
-
-  // MCP protocol requires content array with text type
-  res.json({
+  // MCP protocol requires content array with text type, sent as SSE event
+  const responseData = {
     content: [
       {
         type: "text",
         text: JSON.stringify({ results }),
       },
     ],
-  });
+  };
+
+  res.write(`data: ${JSON.stringify(responseData)}\n\n`);
+  res.end();
 });
 
 // MCP Tool Handler - Fetch Tool (Required)
 // This implements the "fetch" tool for ChatGPT MCP integration
 app.post("/sse/tools/fetch", (req, res) => {
+  // Set SSE headers for MCP protocol
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+
   const { id } = req.body;
 
-  if (!id || !documentStore.has(id)) {
-    return res.json({
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            id,
-            title: "Not Found",
-            text: "Document not found",
-            url: "#",
-            metadata: {},
-          }),
-        },
-      ],
-    });
+  let doc = {
+    id: id || "unknown",
+    title: "Not Found",
+    text: "Document not found",
+    url: "#",
+    metadata: {},
+  };
+
+  if (id && documentStore.has(id)) {
+    doc = documentStore.get(id);
   }
 
-  const doc = documentStore.get(id);
-
-  // MCP protocol requires content array with text type
-  res.json({
+  // MCP protocol requires content array with text type, sent as SSE event
+  const responseData = {
     content: [
       {
         type: "text",
         text: JSON.stringify(doc),
       },
     ],
-  });
+  };
+
+  res.write(`data: ${JSON.stringify(responseData)}\n\n`);
+  res.end();
 });
 
 // Legacy MCP POST endpoint
