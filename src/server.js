@@ -388,7 +388,7 @@ app.post("/mcp", (req, res) => {
     teachingMode: policy.mode,
     teachingNote: policy.message,
     questions: generateClarifyingQuestions(intent),
-    concepts: getConceptBreakdown(intent),
+    concepts: getConceptBreakdown(intent, userMessage),
     recommendedLibraries: stableLibraries,
     recommendedTools: tools,
     techStack,
@@ -402,6 +402,20 @@ app.post("/mcp", (req, res) => {
     infrastructureOptions: infrastructureRecommendations,
     note: "You are expected to assemble the final solution. I provide guidance, patterns, and examples only.",
   };
+
+  // Default teaching behavior: return ONLY concept explanations + small snippets.
+  // This avoids dumping full project code or large integration examples.
+  if (policy.mode === "concept-snippets") {
+    res.status(200).json({
+      identity,
+      intent,
+      teachingMode: policy.mode,
+      teachingNote: policy.message,
+      questions: generateClarifyingQuestions(intent),
+      concepts: getConceptBreakdown(intent, userMessage),
+    });
+    return;
+  }
 
   // If the user asks for full implementations, we still respond but enforce concept-snippet output.
   // Also sanitize any large embedded code blocks (exampleCode/code fields).

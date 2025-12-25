@@ -1,4 +1,5 @@
-export function getConceptBreakdown(intent) {
+export function getConceptBreakdown(intent, userMessage = "") {
+  const messageLower = String(userMessage ?? "").toLowerCase();
   if (intent === "express-rest-api") {
     return [
       {
@@ -96,9 +97,12 @@ export async function createUserAction(formData: FormData) {
   }
 
   if (
-    intent.includes("payment") ||
-    intent.includes("razorpay") ||
-    intent.includes("payu")
+    messageLower.includes("payment") ||
+    messageLower.includes("payment gateway") ||
+    messageLower.includes("razorpay") ||
+    messageLower.includes("payu") ||
+    messageLower.includes("cashfree") ||
+    messageLower.includes("instamojo")
   ) {
     return [
       {
@@ -129,9 +133,11 @@ app.post("/payments/order", async (req, res) => {
   }
 
   if (
-    intent.includes("proxmox") ||
-    intent.includes("infrastructure") ||
-    intent.includes("virtualization")
+    messageLower.includes("proxmox") ||
+    messageLower.includes("virtual machine") ||
+    messageLower.includes("vm") ||
+    messageLower.includes("virtualization") ||
+    messageLower.includes("infrastructure")
   ) {
     return [
       {
