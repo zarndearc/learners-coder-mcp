@@ -60,12 +60,21 @@ app.get("/", (req, res) => {
 app.post("/mcp", (req, res) => {
   const userMessage = req.body?.message || "";
 
+  // Set SSE headers for streaming response
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+
   const policy = enforceTeachingPolicy(userMessage);
   if (policy.blocked) {
-    return res.json({
+    const event = JSON.stringify({
       identity,
       response: policy.message,
     });
+    res.write(`data: ${event}\n\n`);
+    res.end();
+    return;
   }
 
   const intent = analyzeIntent(userMessage);
@@ -105,7 +114,7 @@ app.post("/mcp", (req, res) => {
     };
   }
 
-  res.json({
+  const responseData = {
     identity,
     intent,
     learningStrategy: "concept-first",
@@ -123,7 +132,12 @@ app.post("/mcp", (req, res) => {
     paymentGatewayOptions: paymentRecommendations,
     infrastructureOptions: infrastructureRecommendations,
     note: "You are expected to assemble the final solution. I provide guidance, patterns, and examples only.",
-  });
+  };
+
+  // Send as SSE event
+  const event = JSON.stringify(responseData);
+  res.write(`data: ${event}\n\n`);
+  res.end();
 });
 
 // Health check endpoint
