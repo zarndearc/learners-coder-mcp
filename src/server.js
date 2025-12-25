@@ -29,7 +29,17 @@ import {
 } from "./handlers/payments.js";
 
 const app = express();
-app.use(cors());
+
+// CORS middleware - must be before routes
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
+// JSON parsing middleware
 app.use(express.json());
 
 // In-memory document store for MCP search/fetch operations
@@ -97,6 +107,35 @@ function initializeDocumentStore() {
 
 // Initialize on startup
 initializeDocumentStore();
+
+// ============ CORS OPTIONS HANDLERS ============
+// Handle OPTIONS requests for all MCP endpoints
+app.options("/sse/", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Cache-Control", "no-cache");
+  res.end();
+});
+
+app.options("/sse/tools/search", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Cache-Control", "no-cache");
+  res.end();
+});
+
+app.options("/sse/tools/fetch", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Cache-Control", "no-cache");
+  res.end();
+});
 
 // Root endpoint for service health and info
 app.get("/", (req, res) => {
