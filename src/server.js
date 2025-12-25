@@ -1,5 +1,8 @@
 import express from "express";
 import cors from "cors";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import * as z from "zod/v4";
 import { identity } from "./config/identity.js";
 import { analyzeIntent } from "./handlers/intent.js";
 import { generateClarifyingQuestions } from "./handlers/questions.js";
@@ -108,33 +111,166 @@ function initializeDocumentStore() {
 // Initialize on startup
 initializeDocumentStore();
 
-// ============ CORS OPTIONS HANDLERS ============
-// Handle OPTIONS requests for all MCP endpoints
-app.options("/sse/", (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Cache-Control", "no-cache");
-  res.end();
+// ============ MCP SERVER (ChatGPT Connectors) ============
+// ChatGPT expects a real MCP server over SSE at the configured server_url.
+// The MCP SSE transport uses:
+// - GET  /sse/          to establish the SSE stream (Content-Type: text/event-stream)
+// - POST /sse/messages  to receive JSON-RPC messages (application/json)
+
+function createMcpServer() {
+  const server = new McpServer(
+    {
+      name: "learners-coder-mcp",
+      version: "2.0.0",
+    },
+    {
+      capabilities: {
+        logging: {},
+      },
+    }
+  );
+
+  // Required by OpenAI MCP guide for deep research/connectors.
+  server.registerTool(
+    "search",
+    {
+      description:
+        "Search the Learner's Coder knowledge base and return a list of relevant results.",
+      inputSchema: {
+        query: z.string().describe("Search query"),
+      },
+    },
+    async ({ query }) => {
+      const queryLower = String(query ?? "").toLowerCase();
+
+      const results = [];
+      if (queryLower) {
+        documentStore.forEach((doc) => {
+          const metadataValues = doc.metadata
+            ? Object.values(doc.metadata)
+            : [];
+          const matchesMetadata = metadataValues.some((val) =>
+            String(val).toLowerCase().includes(queryLower)
+          );
+
+          if (
+            doc.title.toLowerCase().includes(queryLower) ||
+            doc.text.toLowerCase().includes(queryLower) ||
+            matchesMetadata
+          ) {
+            results.push({
+              id: doc.id,
+              title: doc.title,
+              url: doc.url,
+            });
+          }
+        });
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            // Per OpenAI MCP guide: return ONE text content item whose text is a JSON-encoded string.
+            text: JSON.stringify({ results }),
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "fetch",
+    {
+      description:
+        "Fetch the full contents of a knowledge base document by its id.",
+      inputSchema: {
+        id: z.string().describe("Document id"),
+      },
+    },
+    async ({ id }) => {
+      const docId = String(id ?? "");
+      const doc = documentStore.get(docId);
+
+      const payload = doc ?? {
+        id: docId,
+        title: "Not Found",
+        text: "Document not found",
+        url: "#",
+        metadata: {},
+      };
+
+      return {
+        content: [
+          {
+            type: "text",
+            // Per OpenAI MCP guide: JSON-encoded string of the document object.
+            text: JSON.stringify(payload),
+          },
+        ],
+      };
+    }
+  );
+
+  return server;
+}
+
+const mcpServer = createMcpServer();
+const mcpTransports = new Map();
+
+function attachSseRoute(path) {
+  app.get(path, async (req, res) => {
+    try {
+      const transport = new SSEServerTransport("/sse/messages", res);
+      mcpTransports.set(transport.sessionId, transport);
+
+      transport.onclose = () => {
+        mcpTransports.delete(transport.sessionId);
+      };
+
+      await mcpServer.connect(transport);
+    } catch (error) {
+      console.error("Error establishing MCP SSE stream:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Error establishing SSE stream" });
+      }
+    }
+  });
+}
+
+// Support both /sse and /sse/ to avoid hosting redirects changing behavior.
+attachSseRoute("/sse");
+attachSseRoute("/sse/");
+
+app.post("/sse/messages", async (req, res) => {
+  const sessionId = req.query.sessionId;
+  if (!sessionId) {
+    res.status(400).send("Missing sessionId parameter");
+    return;
+  }
+
+  const transport = mcpTransports.get(String(sessionId));
+  if (!transport) {
+    res.status(404).send("Session not found");
+    return;
+  }
+
+  try {
+    await transport.handlePostMessage(req, res, req.body);
+  } catch (error) {
+    console.error("Error handling MCP message:", error);
+    if (!res.headersSent) {
+      res.status(500).send("Error handling MCP message");
+    }
+  }
 });
 
-app.options("/sse/tools/search", (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
+// Optional: basic OPTIONS handling (some hosts/proxies issue preflights).
+app.options(["/sse", "/sse/", "/sse/messages"], (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Cache-Control", "no-cache");
-  res.end();
-});
-
-app.options("/sse/tools/fetch", (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Cache-Control", "no-cache");
-  res.end();
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.status(204).end();
 });
 
 // Root endpoint for service health and info
@@ -163,114 +299,7 @@ app.get("/", (req, res) => {
   });
 });
 
-// MCP SSE Endpoint (Required for ChatGPT Connectors)
-// This endpoint must be accessible at /sse/ and handle MCP protocol
-app.get("/sse/", (req, res) => {
-  // Set SSE headers
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  // Send a simple handshake/ready message
-  res.write(`:ready\n\n`);
-
-  // Keep connection alive
-  const keepAliveInterval = setInterval(() => {
-    res.write(`:ping\n\n`);
-  }, 30000);
-
-  req.on("close", () => {
-    clearInterval(keepAliveInterval);
-  });
-});
-
-// MCP Tool Handler - Search Tool (Required)
-// This implements the "search" tool for ChatGPT MCP integration
-app.post("/sse/tools/search", (req, res) => {
-  // Set SSE headers for MCP protocol
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-
-  const { query } = req.body;
-
-  let results = [];
-
-  if (query) {
-    // Search documents in the store
-    const queryLower = query.toLowerCase();
-
-    documentStore.forEach((doc) => {
-      if (
-        doc.title.toLowerCase().includes(queryLower) ||
-        doc.text.toLowerCase().includes(queryLower) ||
-        Object.values(doc.metadata).some((val) =>
-          String(val).toLowerCase().includes(queryLower)
-        )
-      ) {
-        results.push({
-          id: doc.id,
-          title: doc.title,
-          url: doc.url,
-        });
-      }
-    });
-  }
-
-  // MCP protocol requires content array with text type, sent as SSE event
-  const responseData = {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({ results }),
-      },
-    ],
-  };
-
-  res.write(`data: ${JSON.stringify(responseData)}\n\n`);
-  res.end();
-});
-
-// MCP Tool Handler - Fetch Tool (Required)
-// This implements the "fetch" tool for ChatGPT MCP integration
-app.post("/sse/tools/fetch", (req, res) => {
-  // Set SSE headers for MCP protocol
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-
-  const { id } = req.body;
-
-  let doc = {
-    id: id || "unknown",
-    title: "Not Found",
-    text: "Document not found",
-    url: "#",
-    metadata: {},
-  };
-
-  if (id && documentStore.has(id)) {
-    doc = documentStore.get(id);
-  }
-
-  // MCP protocol requires content array with text type, sent as SSE event
-  const responseData = {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(doc),
-      },
-    ],
-  };
-
-  res.write(`data: ${JSON.stringify(responseData)}\n\n`);
-  res.end();
-});
+// Note: MCP tools are served via JSON-RPC over /sse/messages, not custom REST endpoints.
 
 // Legacy MCP POST endpoint
 app.post("/mcp", (req, res) => {
@@ -395,6 +424,8 @@ app.listen(PORT, () => {
     `🚀 Learner's Coder MCP - Enterprise Edition running on port ${PORT}`
   );
   console.log(`📚 Endpoints:`);
-  console.log(`   POST /mcp - Main MCP endpoint`);
+  console.log(`   GET  /sse/ - MCP SSE endpoint (ChatGPT Connectors)`);
+  console.log(`   POST /sse/messages - MCP message endpoint (JSON-RPC)`);
+  console.log(`   POST /mcp - Legacy endpoint`);
   console.log(`   GET /health - Health check`);
 });
